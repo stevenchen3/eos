@@ -12,16 +12,13 @@ services:
     expose:
       - "8888"
     volumes:
-      - eosiod-data-volume:/opt/eosio/bin/data-dir
+      - ${HOME}/.eos/eosiod:/opt/eosio/bin/data-dir
+      - ./config.ini:/opt/eosio/bin/data-dir/config.ini
 
   walletd:
     image: eosio/eos
-    command: /opt/eosio/bin/eosio-walletd
+    command: /opt/eosio/bin/eosiowd
     links:
       - eosiod
     volumes:
-      - walletd-data-volume:/opt/eosio/bin/data-dir
-
-volumes:
-  eosiod-data-volume:
-  walletd-data-volume:
+      - ${HOME}/.eos/walletd:/opt/eosio/bin/data-dir
