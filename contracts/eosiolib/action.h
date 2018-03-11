@@ -61,8 +61,8 @@ extern "C" {
     * account_name code = current_receiver();
     * print(Name(code)); // Output: eos
     *
-    * eos_assert(Name(current_receiver()) === "eos", "This action expects to be received by eos"); // Do nothing
-    * eos_assert(Name(current_receiver()) === "inita", "This action expects to be received by inita"); // Throws exception and roll back transfer transaction
+    * eosio_assert(Name(current_receiver()) === "eos", "This action expects to be received by eos"); // Do nothing
+    * eosio_assert(Name(current_receiver()) === "inita", "This action expects to be received by inita"); // Throws exception and roll back transfer transaction
     *
     * print(now()); // Output: timestamp of last accepted block
     *
@@ -112,8 +112,8 @@ extern "C" {
 
    /**
     *  Send an inline action in the context of this action's parent transaction
-    * @param serialized_action
-    * @param size
+    * @param serialized_action - serialized action 
+    * @param size - size of serialized action in bytes
     */
    void send_inline(char *serialized_action, size_t size);
 

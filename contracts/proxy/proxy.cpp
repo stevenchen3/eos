@@ -11,16 +11,25 @@ namespace proxy {
    using namespace eosio;
 
    namespace configs {
+
       bool get(config &out, const account_name &self) {
-         auto read = load_i64(self, self, N(config), (char*)&out, sizeof(config));
-         if (read < 0) {
+         auto it = db_find_i64(self, self, N(config), config::key);
+         if (it != -1) {
+            auto size = db_get_i64(it, (char*)&out, sizeof(config));
+            eosio_assert(size == sizeof(config), "Wrong record size");
+            return true;
+         } else {
             return false;
          }
-         return true;
       }
 
       void store(const config &in, const account_name &self) {
-         store_i64(self, N(config), self, (const char *)&in, sizeof(config));
+         auto it = db_find_i64(self, self, N(config), config::key);
+         if (it != -1) {
+            db_update_i64(it, self, (const char *)&in, sizeof(config));
+         } else {
+            db_store_i64(self, N(config), self, config::key, (const char *)&in, sizeof(config));
+         }
       }
    };
 
@@ -29,11 +38,11 @@ namespace proxy {
       config code_config;
       const auto self = current_receiver();
       auto get_res = configs::get(code_config, self);
-      eos_assert(get_res, "Attempting to use unconfigured proxy");
+      eosio_assert(get_res, "Attempting to use unconfigured proxy");
       if (transfer.from == self) {
-         eos_assert(transfer.to == code_config.owner,  "proxy may only pay its owner" );
+         eosio_assert(transfer.to == code_config.owner,  "proxy may only pay its owner" );
       } else {
-         eos_assert(transfer.to == self, "proxy is not involved in this transfer");
+         eosio_assert(transfer.to == self, "proxy is not involved in this transfer");
          T new_transfer = T(transfer);
          new_transfer.from = self;
          new_transfer.to = code_config.owner;
@@ -62,7 +71,7 @@ namespace proxy {
       eosio::print("starting onerror\n");
       const auto self = current_receiver();
       config code_config;
-      eos_assert(configs::get(code_config, self), "Attempting use of unconfigured proxy");
+      eosio_assert(configs::get(code_config, self), "Attempting use of unconfigured proxy");
 
       auto id = code_config.next_id++;
       configs::store(code_config, self);

@@ -60,7 +60,7 @@ chain_plugin::~chain_plugin(){}
 void chain_plugin::set_program_options(options_description& cli, options_description& cfg)
 {
    cfg.add_options()
-         ("genesis-json", bpo::value<boost::filesystem::path>(), "File to read Genesis State from")
+         ("genesis-json", bpo::value<bfs::path>()->default_value("genesis.json"), "File to read Genesis State from")
          ("genesis-timestamp", bpo::value<string>(), "override the initial timestamp in the Genesis State file")
          ("block-log-dir", bpo::value<bfs::path>()->default_value("blocks"),
           "the location of the block log (absolute path or relative to application data dir)")
@@ -93,7 +93,11 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
    ilog("initializing chain plugin");
 
    if(options.count("genesis-json")) {
-      my->genesis_file = options.at("genesis-json").as<bfs::path>();
+      auto genesis = options.at("genesis-json").as<bfs::path>();
+      if(genesis.is_relative())
+         my->genesis_file = app().config_dir() / genesis;
+      else
+         my->genesis_file = genesis;
    }
    if(options.count("genesis-timestamp")) {
      string tstr = options.at("genesis-timestamp").as<string>();
@@ -168,7 +172,7 @@ void chain_plugin::plugin_initialize(const variables_map& options) {
 void chain_plugin::plugin_startup()
 { try {
    FC_ASSERT( fc::exists( my->genesis_file ),
-              "unable to find genesis file '${f}', check --genesis-json argument", 
+              "unable to find genesis file '${f}', check --genesis-json argument",
               ("f",my->genesis_file.generic_string()) );
    my->chain_config->block_log_dir = my->block_log_dir;
    my->chain_config->shared_memory_dir = app().data_dir() / default_shared_memory_dir;
@@ -284,7 +288,7 @@ abi_def get_abi( const chain_controller& db, const name& account ) {
    const auto& code_accnt  = d.get<account_object,by_name>( account );
 
    abi_def abi;
-   abi_serializer::to_abi(code_accnt.name, code_accnt.abi, abi);
+   abi_serializer::to_abi(code_accnt.abi, abi);
    return abi;
 }
 
@@ -306,7 +310,7 @@ read_only::get_table_rows_result read_only::get_table_rows( const read_only::get
       return get_table_rows_ex<contracts::key_value_index, contracts::by_scope_primary>(p,abi);
    } else if( table_type == KEYstr ) {
       return get_table_rows_ex<contracts::keystr_value_index, contracts::by_scope_primary>(p,abi);
-   } else if( table_type == KEYi128i128 ) { 
+   } else if( table_type == KEYi128i128 ) {
       if( table_key == PRIMARY )
          return get_table_rows_ex<contracts::key128x128_value_index, contracts::by_scope_primary>(p,abi);
       if( table_key == SECONDARY )
@@ -330,12 +334,12 @@ vector<asset> read_only::get_currency_balance( const read_only::get_currency_bal
       fc::raw::unpack(ds, balance);
       auto cursor = asset(balance, symbol(obj.primary_key));
 
-      if (p.symbol || cursor.symbol_name().compare(*p.symbol) == 0) {
+      if( !p.symbol || cursor.symbol_name().compare(*p.symbol) == 0 ) {
          results.emplace_back(balance, symbol(obj.primary_key));
       }
 
       // return false if we are looking for one and found it, true otherwise
-      return p.symbol || cursor.symbol_name().compare(*p.symbol) != 0;
+      return !p.symbol || cursor.symbol_name().compare(*p.symbol) != 0;
    });
 
    return results;
@@ -358,18 +362,51 @@ fc::variant read_only::get_currency_stats( const read_only::get_currency_stats_p
    return results;
 }
 
-read_only::get_block_results read_only::get_block(const read_only::get_block_params& params) const {
+template<typename Api>
+struct resolver_factory {
+   static auto make(const Api *api) {
+      return [api](const account_name &name) -> optional<abi_serializer> {
+         const auto *accnt = api->db.get_database().template find<account_object, by_name>(name);
+         if (accnt != nullptr) {
+            abi_def abi;
+            if (abi_serializer::to_abi(accnt->abi, abi)) {
+               return abi_serializer(abi);
+            }
+         }
+
+         return optional<abi_serializer>();
+      };
+   }
+};
+
+template<typename Api>
+auto make_resolver(const Api *api) {
+   return resolver_factory<Api>::make(api);
+}
+
+fc::variant read_only::get_block(const read_only::get_block_params& params) const {
+   optional<signed_block> block;
    try {
-      if (auto block = db.fetch_block_by_id(fc::json::from_string(params.block_num_or_id).as<block_id_type>()))
-         return *block;
-   } catch (fc::bad_cast_exception) {/* do nothing */}
-   try {
-      if (auto block = db.fetch_block_by_number(fc::to_uint64(params.block_num_or_id)))
-         return *block;
+      block = db.fetch_block_by_id(fc::json::from_string(params.block_num_or_id).as<block_id_type>());
+      if (!block) {
+         block = db.fetch_block_by_number(fc::to_uint64(params.block_num_or_id));
+      }
+
    } catch (fc::bad_cast_exception) {/* do nothing */}
 
-   FC_THROW_EXCEPTION(unknown_block_exception,
+   if (!block)
+      FC_THROW_EXCEPTION(unknown_block_exception,
                       "Could not find block: ${block}", ("block", params.block_num_or_id));
+
+   fc::variant pretty_output;
+   abi_serializer::to_variant(*block, pretty_output, make_resolver(this));
+
+   uint32_t ref_block_prefix = block->id()._hash[1];
+
+   return fc::mutable_variant_object(pretty_output.get_object())
+           ("id", block->id())
+           ("block_num",block->block_num())
+           ("ref_block_prefix", ref_block_prefix);
 }
 
 read_write::push_block_results read_write::push_block(const read_write::push_block_params& params) {
@@ -379,18 +416,7 @@ read_write::push_block_results read_write::push_block(const read_write::push_blo
 
 read_write::push_transaction_results read_write::push_transaction(const read_write::push_transaction_params& params) {
    packed_transaction pretty_input;
-   auto resolver = [&,this]( const account_name& name ) -> optional<abi_serializer> {
-      const auto* accnt  = db.get_database().find<account_object,by_name>( name );
-      if (accnt != nullptr) {
-         abi_def abi;
-         if (abi_serializer::to_abi(accnt->name, accnt->abi, abi)) {
-            return abi_serializer(abi);
-         }
-      }
-
-      return optional<abi_serializer>();
-   };
-
+   auto resolver = make_resolver(this);
    abi_serializer::from_variant(params, pretty_input, resolver);
    auto result = db.push_transaction(pretty_input, skip_flags);
 #warning TODO: get transaction results asynchronously
@@ -406,9 +432,9 @@ read_write::push_transactions_results read_write::push_transactions(const read_w
    result.reserve(params.size());
    for( const auto& item : params ) {
       try {
-        result.emplace_back( push_transaction( item ) ); 
+        result.emplace_back( push_transaction( item ) );
       } catch ( const fc::exception& e ) {
-        result.emplace_back( read_write::push_transaction_results{ transaction_id_type(), 
+        result.emplace_back( read_write::push_transaction_results{ transaction_id_type(),
                           fc::mutable_variant_object( "error", e.to_detail_string() ) } );
       }
    }
@@ -427,7 +453,7 @@ read_only::get_code_results read_only::get_code( const get_code_params& params )
    }
 
    abi_def abi;
-   if( abi_serializer::to_abi(accnt.name, accnt.abi, abi) ) {
+   if( abi_serializer::to_abi(accnt.abi, abi) ) {
       result.abi = std::move(abi);
    }
 
@@ -445,7 +471,7 @@ read_only::get_account_results read_only::get_account( const get_account_params&
    const auto& permissions = d.get_index<permission_index,by_owner>();
    auto perm = permissions.lower_bound( boost::make_tuple( params.account_name ) );
    while( perm != permissions.end() && perm->owner == params.account_name ) {
-      /// TODO: lookup perm->parent name 
+      /// TODO: lookup perm->parent name
       name parent;
 
       // Don't lookup parent if null
@@ -453,8 +479,8 @@ read_only::get_account_results read_only::get_account( const get_account_params&
          const auto* p = d.find<permission_object,by_id>( perm->parent );
          if( p ) {
             FC_ASSERT(perm->owner == p->owner, "Invalid parent");
-            parent = p->name; 
-         } 
+            parent = p->name;
+         }
       }
 
       result.permissions.push_back( permission{ perm->name, parent, perm->auth.to_authority() } );
@@ -469,7 +495,7 @@ read_only::abi_json_to_bin_result read_only::abi_json_to_bin( const read_only::a
    abi_json_to_bin_result result;
    const auto& code_account = db.get_database().get<account_object,by_name>( params.code );
    abi_def abi;
-   if( abi_serializer::to_abi(code_account.name, code_account.abi, abi) ) {
+   if( abi_serializer::to_abi(code_account.abi, abi) ) {
       abi_serializer abis( abi );
       result.binargs = abis.variant_to_binary( abis.get_action_type( params.action ), params.args );
    }
@@ -480,7 +506,7 @@ read_only::abi_bin_to_json_result read_only::abi_bin_to_json( const read_only::a
    abi_bin_to_json_result result;
    const auto& code_account = db.get_database().get<account_object,by_name>( params.code );
    abi_def abi;
-   if( abi_serializer::to_abi(code_account.name, code_account.abi, abi) ) {
+   if( abi_serializer::to_abi(code_account.abi, abi) ) {
       abi_serializer abis( abi );
       result.args = abis.binary_to_variant( abis.get_action_type( params.action ), params.binargs );
    }

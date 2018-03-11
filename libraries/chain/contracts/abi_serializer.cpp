@@ -63,7 +63,9 @@ namespace eosio { namespace chain { namespace contracts {
       built_in_types.emplace("string",                    pack_unpack<string>());
       built_in_types.emplace("time",                      pack_unpack<fc::time_point_sec>());
       built_in_types.emplace("signature",                 pack_unpack<signature_type>());
-      built_in_types.emplace("checksum",                  pack_unpack<checksum_type>());
+      built_in_types.emplace("checksum160",               pack_unpack<checksum160_type>());
+      built_in_types.emplace("checksum256",               pack_unpack<checksum256_type>());
+      built_in_types.emplace("checksum512",               pack_unpack<checksum512_type>());
       built_in_types.emplace("field_name",                pack_unpack<field_name>());
       built_in_types.emplace("fixed_string32",            pack_unpack<fixed_string32>());
       built_in_types.emplace("fixed_string16",            pack_unpack<fixed_string16>());
@@ -131,17 +133,6 @@ namespace eosio { namespace chain { namespace contracts {
       FC_ASSERT( tables.size() == abi.tables.size() );
    }
 
-   void abi_serializer::append_system_abi(account_name account, abi_def& abi) {
-      if ( account == eosio::chain::config::system_account_name ) {
-         abi_def eos_abi = chain_initializer::eos_contract_abi();
-         abi.actions.insert(abi.actions.end(), eos_abi.actions.cbegin(), eos_abi.actions.cend());
-         abi.structs.insert(abi.structs.end(), eos_abi.structs.cbegin(), eos_abi.structs.cend());
-         abi.tables.insert(abi.tables.end(), eos_abi.tables.cbegin(), eos_abi.tables.cend());
-         abi.types.insert(abi.types.end(), eos_abi.types.cbegin(), eos_abi.types.cend());
-      }
-   }
-
-   
    bool abi_serializer::is_builtin_type(const type_name& type)const {
       return built_in_types.find(type) != built_in_types.end();
    }

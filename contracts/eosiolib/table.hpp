@@ -1,5 +1,7 @@
 #pragma once
+#include <eosiolib/system.h>
 #include <eosiolib/db.h>
+#include <eosiolib/datastream.hpp>
 
 namespace eosio {
 
@@ -21,9 +23,9 @@ namespace eosio {
             char temp[1024];
             *reinterpret_cast<uint64_t *>(temp) = key;
             auto read = load_i64( DefaultScope, scope , TableName, temp, sizeof(temp) );
-            eos_assert( read > 0, "key does not exist" );
+            eosio_assert( read > 0, "key does not exist" );
 
-            datastream<const char*> ds(temp, read);
+            datastream<const char*> ds(temp, uint32_t(read) );
             T result;
             ds >> result;
             return result;
@@ -39,7 +41,7 @@ namespace eosio {
                return def;
             }
 
-            datastream<const char*> ds(temp, read);
+            datastream<const char*> ds(temp, uint32_t(read) );
             T result;
             ds >> result;
             return result;
@@ -54,7 +56,7 @@ namespace eosio {
                return def;
             }
 
-            datastream<const char*> ds(temp, read);
+            datastream<const char*> ds(temp, uint32_t(read) );
             T result;
             ds >> result;
             return result;
@@ -63,7 +65,7 @@ namespace eosio {
          static void set( const T& value = T(), scope_name scope = DefaultScope, uint64_t bta = BillToAccount ) {
             auto size = pack_size( value );
             char buf[size];
-            eos_assert( size <= 1024, "singleton too big to store" );
+            eosio_assert( size <= 1024, "singleton too big to store" );
 
             datastream<char*> ds( buf, size );
             ds << value;

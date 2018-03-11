@@ -72,12 +72,14 @@ namespace eosio { namespace chain {
             path                           shared_memory_dir   =  config::default_shared_memory_dir;
             uint64_t                       shared_memory_size  =  config::default_shared_memory_size;
             bool                           read_only           =  false;
+            std::vector<signal<void(const block_trace&)>::slot_type> applied_block_callbacks;
             std::vector<signal<void(const signed_block&)>::slot_type> applied_irreversible_block_callbacks;
+            std::vector<signal<void(const transaction_metadata&, const packed_transaction&)>::slot_type> on_pending_transaction_callbacks;
             contracts::genesis_state_type  genesis;
             runtime_limits                 limits;
          };
 
-         chain_controller( const controller_config& cfg );
+         explicit chain_controller( const controller_config& cfg );
          ~chain_controller();
 
 
@@ -110,25 +112,12 @@ namespace eosio { namespace chain {
           * This signal is emitted any time a new transaction is added to the pending
           * block state.
           */
-         signal<void(const packed_transaction&)> on_pending_transaction;
+      signal<void(const transaction_metadata&, const packed_transaction&)> on_pending_transaction;
 
 
 
-
-
-
-
-
-
-
-
-         /**
-          * @brief Check whether the controller is currently applying a block or not
-          * @return True if the controller is now applying a block; false otherwise
-          */
-         bool is_applying_block()const { return _currently_applying_block; }
          bool is_start_of_round( block_num_type n )const;
-         uint32_t blocks_per_round()const; 
+         uint32_t blocks_per_round()const;
 
 
          chain_id_type get_chain_id()const { return chain_id_type(); } /// TODO: make this hash of constitution
@@ -215,7 +204,7 @@ namespace eosio { namespace chain {
             clear_pending();
 
             /** after applying f() push previously input transactions on top */
-            auto on_exit = fc::make_scoped_exit( [&](){ 
+            auto on_exit = fc::make_scoped_exit( [&](){
                for( auto& t : old_input ) {
                   try {
                      if (!is_known_transaction(t.id))
@@ -354,7 +343,7 @@ namespace eosio { namespace chain {
 
          /**
           * This method performs some consistency checks on a transaction.
-          * @thow transaction_exception if the transaction is invalid
+          * @throw transaction_exception if the transaction is invalid
           */
          template<typename T>
          void validate_transaction(const T& trx) const {
@@ -366,7 +355,7 @@ namespace eosio { namespace chain {
             validate_tapos(trx);
 
          } FC_CAPTURE_AND_RETHROW( (trx) ) }
-         
+
          /// Validate transaction helpers @{
          void validate_uniqueness(const transaction& trx)const;
          void validate_tapos(const transaction& trx)const;
@@ -402,6 +391,7 @@ namespace eosio { namespace chain {
          void update_usage( transaction_metadata&, uint32_t act_usage );
          void update_signing_producer(const producer_object& signing_producer, const signed_block& new_block);
          void update_last_irreversible_block();
+         void update_or_create_producers( const producer_schedule_type& producers);
          void clear_expired_transactions();
          /// @}
 

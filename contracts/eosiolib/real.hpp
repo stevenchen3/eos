@@ -30,7 +30,7 @@ namespace eosio {
         * @brief Constructor to double object from uint64 value
         *
         * @details Constructor to double object from uint64 value
-        * @param val    data
+        * @param _val    data
         */
         real(const uint64_t &_val) : val(_val) {}
 
@@ -92,8 +92,6 @@ namespace eosio {
      * @brief Compares two double variables c1 and c2
      * 
      * @details Compares two double variables c1 and c2
-     * @param c1
-     * @param c2
      * @return if c1 == c2, return true, otherwise false
      */
     bool operator==(const real &c1, const real &c2) {
@@ -105,8 +103,6 @@ namespace eosio {
      * @brief Compares two double variables c1 and c2
      * 
      * @details Compares two double variables c1 and c2
-     * @param c1
-     * @param c2
      * @return if c1 > c2, return true, otherwise false
      */
     bool operator>(const real &c1, const real &c2) {
@@ -118,8 +114,6 @@ namespace eosio {
      * @brief Compares two double variables c1 and c2
      * 
      * @details Compares two double variables c1 and c2
-     * @param c1
-     * @param c2
      * @return if c1 < c2, return true, otherwise false
      */
     bool operator<(const real &c1, const real &c2) {

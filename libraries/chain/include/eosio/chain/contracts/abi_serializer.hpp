@@ -5,6 +5,7 @@
 #pragma once
 #include <eosio/chain/contracts/types.hpp>
 #include <eosio/chain/transaction.hpp>
+#include <eosio/chain/block.hpp>
 
 #include <fc/variant_object.hpp>
 
@@ -72,12 +73,11 @@ struct abi_serializer {
    }
 
    template<typename Vec>
-   static bool to_abi(account_name account, const Vec& abi_vec, abi_def& abi)
+   static bool to_abi(const Vec& abi_vec, abi_def& abi)
    {
       if( !is_empty_abi(abi_vec) ) { /// 4 == packsize of empty Abi
          fc::datastream<const char*> ds( abi_vec.data(), abi_vec.size() );
          fc::raw::unpack( ds, abi );
-         append_system_abi(account, abi);
          return true;
       }
       return false;
@@ -85,7 +85,6 @@ struct abi_serializer {
 
    private:
    void binary_to_variant(const type_name& type, fc::datastream<const char*>& stream, fc::mutable_variant_object& obj)const;
-   static void append_system_abi(account_name account, abi_def& abi);
 };
 
 namespace impl {
@@ -99,7 +98,10 @@ namespace impl {
              std::is_same<T, packed_transaction>::value ||
              std::is_same<T, action>::value ||
              std::is_same<T, transaction_trace>::value ||
-             std::is_same<T, action_trace>::value;
+             std::is_same<T, action_trace>::value ||
+             std::is_same<T, shard_summary>::value ||
+             std::is_same<T, region_summary>::value ||
+             std::is_base_of<signed_block_summary, T>:: value;
    }
 
    /**

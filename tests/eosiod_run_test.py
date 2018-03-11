@@ -1,22 +1,21 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import testUtils
 
+import decimal
 import argparse
 import random
 import re
 
 ###############################################################
 # eosiod_run_test
-# --dumpErrorDetails <Upon error print tn_data_*/config.ini and tn_data_*/stderr.log to stdout>
-# --keepLogs <Don't delete tn_data_* folders upon test completion>
+# --dump-error-details <Upon error print tn_data_*/config.ini and tn_data_*/stderr.log to stdout>
+# --keep-logs <Don't delete tn_data_* folders upon test completion>
 ###############################################################
 
 Print=testUtils.Utils.Print
+errorExit=testUtils.Utils.errorExit
 
-def errorExit(msg="", raw=False, errorCode=1):
-    Print("ERROR:" if not raw else "", msg)
-    exit(errorCode)
 
 def cmdError(name, code=0, exitNow=False):
     msg="FAILURE - %s%s" % (name, ("" if code == 0 else (" returned error code %d" % code)))
@@ -50,17 +49,15 @@ parser.add_argument("--dont-launch", help="Don't launch own node. Assume node is
                     action='store_true')
 parser.add_argument("--keep-logs", help="Don't delete tn_data_* folders upon test completion",
                     action='store_true')
-parser.add_argument("--exit-early", help="Exit prior to known error point.", action='store_true')
 parser.add_argument("-v", help="verbose logging", action='store_true')
 parser.add_argument("--not-noon", help="This is not the Noon branch.", action='store_true')
-
+parser.add_argument("--dont-kill", help="Leave cluster running after test finishes", action='store_true')
 
 args = parser.parse_args()
 testOutputFile=args.output
 server=args.host
 port=args.port
 debug=args.v
-exitEarly=args.exit_early
 enableMongo=args.mongodb
 amINoon=not args.not_noon
 initaPrvtKey=args.inita_prvt_key
@@ -68,6 +65,7 @@ initbPrvtKey=args.initb_prvt_key
 dumpErrorDetails=args.dump_error_details
 keepLogs=args.keep_logs
 dontLaunch=args.dont_launch
+dontKill=args.dont_kill
 
 testUtils.Utils.Debug=debug
 localTest=True if server == LOCAL_HOST else False
@@ -75,8 +73,8 @@ cluster=testUtils.Cluster(walletd=True, enableMongo=enableMongo, initaPrvtKey=in
 walletMgr=testUtils.WalletMgr(True)
 
 testSuccessful=False
-killEosInstances=True
-killWallet=True
+killEosInstances=not dontKill
+killWallet=not dontKill
 
 WalletdName="eos-walletd"
 ClientName="eosc"
@@ -125,13 +123,13 @@ try:
     PUB_KEY2=currencyAccount.ownerPublicKey
     PRV_KEY3=exchangeAccount.activePrivateKey
     PUB_KEY3=exchangeAccount.activePublicKey
-    
+
     testeraAccount.activePrivateKey=currencyAccount.activePrivateKey=PRV_KEY3
     testeraAccount.activePublicKey=currencyAccount.activePublicKey=PUB_KEY3
 
     exchangeAccount.ownerPrivateKey=PRV_KEY2
     exchangeAccount.ownerPublicKey=PUB_KEY2
-    
+
     Print("Stand up walletd")
     if walletMgr.launch() is False:
         cmdError("%s" % (WalletdName))
@@ -156,7 +154,7 @@ try:
     if initaWallet is None:
         cmdError("eos wallet create")
         errorExit("Failed to create wallet %s." % (initaWalletName))
-    
+
     initaAccount=testUtils.Cluster.initaAccount
     initbAccount=testUtils.Cluster.initbAccount
 
@@ -217,13 +215,16 @@ try:
     noMatch=list(set(expectedkeys) - set(actualKeys))
     if len(noMatch) > 0:
         errorExit("FAILURE - wallet keys did not include %s" % (noMatch), raw=true)
-        
+
     node=cluster.getNode(0)
     if node is None:
         errorExit("Cluster in bad state, received None node")
 
+    Print("Create initial accounts")
+    node.createInitAccounts()
+
     Print("Create new account %s via %s" % (testeraAccount.name, initaAccount.name))
-    transId=node.createAccount(testeraAccount, initaAccount, waitForTransBlock=True)
+    transId=node.createAccount(testeraAccount, initaAccount, stakedDeposit=0, waitForTransBlock=True)
     if transId is None:
         cmdError("%s create account" % (ClientName))
         errorExit("Failed to create account %s" % (testeraAccount.name))
@@ -293,7 +294,7 @@ try:
             transferAmount, initaAccount.name, testeraAccount.name))
     transId=testUtils.Node.getTransId(trans)
 
-    expectedAmount=975311
+    expectedAmount=975311+5000 # 5000 initial deposit
     Print("Verify transfer, Expected: %d" % (expectedAmount))
     actualAmount=node.getAccountBalance(currencyAccount.name)
     if actualAmount is None:
@@ -363,12 +364,15 @@ try:
     typeVal=None
     amountVal=None
     if amINoon:
+        debug and Print("Transaction:", transaction)
         if not enableMongo:
-            typeVal=  transaction["transaction"]["actions"][1]["name"]
-            amountVal=transaction["transaction"]["actions"][1]["data"]["amount"]
+            typeVal=  transaction["transaction"]["data"]["actions"][0]["name"]
+            amountVal=transaction["transaction"]["data"]["actions"][0]["data"]["quantity"]
+            amountVal=int(decimal.Decimal(amountVal.split()[0])*10000)
         else:
             typeVal=  transaction["name"]
-            amountVal=transaction["data"]["amount"]
+            amountVal=transaction["data"]["quantity"]
+            amountVal=int(decimal.Decimal(amountVal.split()[0])*10000)
     else:
         if not enableMongo:
             typeVal=  transaction["transaction"]["messages"][0]["type"]
@@ -378,7 +382,7 @@ try:
             amountVal=transaction["data"]["amount"]
 
     if typeVal!= "transfer" or amountVal != 975311:
-        errorExit("FAILURE - get transaction trans_id failed: %s" % (transId), raw=True)
+        errorExit("FAILURE - get transaction trans_id failed: %s %s %s" % (transId, typeVal, amountVal), raw=True)
 
     Print("Get transactions for account %s" % (testeraAccount.name))
     actualTransactions=node.getTransactionsArrByAccount(testeraAccount.name)
@@ -437,7 +441,7 @@ try:
         opts="--permission currency@active"
         trans=node.pushMessage(contract, action, data, opts)
 
-    Print("Verify currency contract has proper initial balance")
+    Print("Verify currency contract has proper initial balance (via get table)")
     contract="currency"
     table="account"
     row0=node.getTableRow(currencyAccount.name, contract, table, 0)
@@ -450,22 +454,46 @@ try:
     if row0[balanceKey] != 1000000000:
         errorExit("FAILURE - get table currency account failed", raw=True)
 
+    Print("Verify currency contract has proper initial balance (via get currency balance)")
+    res=node.getCurrencyBalance(contract, currencyAccount.name, "CUR")
+    if res is None:
+        cmdError("%s get currency balance" % (ClientName))
+        errorExit("Failed to retrieve CUR balance from contract %s account %s" % (contract, currencyAccount.name))
+
+    if res.strip()[1:-1] != "100000.0000 CUR":
+        errorExit("FAILURE - get currency balance failed", raw=True)
+
+    Print("Verify currency contract has proper total supply of CUR (via get currency stats)")
+    res=node.getCurrencyStats(contract, "CUR")
+    if res is None or not ("supply" in res):
+        cmdError("%s get currency stats" % (ClientName))
+        errorExit("Failed to retrieve CUR stats from contract" % (contract))
+
+    if res["supply"] != "100000.0000 CUR":
+        errorExit("FAILURE - get currency stats failed", raw=True)
+
     Print("push transfer action to currency contract")
     contract="currency"
     action="transfer"
-    data="{\"from\":\"currency\",\"to\":\"inita\",\"quantity\":\"00.0050 CUR\",\"memo\":\"test\"}"
+    data="{\"from\":\"currency\",\"to\":\"inita\",\"quantity\":"
+    if amINoon:
+        data +="\"00.0050 CUR\",\"memo\":\"test\"}"
+    else:
+        data +="50}"
     opts="--permission currency@active"
+    if not amINoon:
+        opts += " --scope currency,inita"
     trans=node.pushMessage(contract, action, data, opts)
-    if trans is None:
+    if not trans[0]:
         cmdError("%s push message currency transfer" % (ClientName))
         errorExit("Failed to push message to currency contract")
-    transId=testUtils.Node.getTransId(trans)
+    transId=testUtils.Node.getTransId(trans[1])
 
     Print("verify transaction exists")
     if not node.waitForTransIdOnNode(transId):
         cmdError("%s get transaction trans_id" % (ClientName))
         errorExit("Failed to verify push message transaction id.")
-    
+
     Print("read current contract balance")
     contract="currency"
     table="account"
@@ -490,15 +518,13 @@ try:
     Print("Exchange Contract Tests")
     Print("upload exchange contract")
 
-# TODO Exchange contract currently not working on eos-noon
-    if not amINoon:
-      wastFile="contracts/exchange/exchange.wast"
-      abiFile="contracts/exchange/exchange.abi"
-      Print("Publish exchange contract")
-      trans=node.publishContract(exchangeAccount.name, wastFile, abiFile, waitForTransBlock=True)
-      if trans is None:
-          cmdError("%s set contract exchange" % (ClientName))
-          errorExit("Failed to publish contract.")
+    wastFile="contracts/exchange/exchange.wast"
+    abiFile="contracts/exchange/exchange.abi"
+    Print("Publish exchange contract")
+    trans=node.publishContract(exchangeAccount.name, wastFile, abiFile, waitForTransBlock=True)
+    if trans is None:
+        cmdError("%s set contract exchange" % (ClientName))
+        errorExit("Failed to publish contract.")
 
     wastFile="contracts/simpledb/simpledb.wast"
     abiFile="contracts/simpledb/simpledb.abi"
@@ -512,11 +538,13 @@ try:
     else:
         Print("Test successful, %s returned error code: %d" % (ClientName, retMap["returncode"]))
 
-    Print("Producer tests")
-    trans=node.createProducer(testeraAccount.name, testeraAccount.ownerPublicKey, waitForTransBlock=False)
-    if trans is None:
-        cmdError("%s create producer" % (ClientName))
-        errorExit("Failed to create producer %s" % (testeraAccount.name))
+# TODO Currently unable to set producer
+    if not amINoon:
+        Print("Producer tests")
+        trans=node.createProducer(testeraAccount.name, testeraAccount.ownerPublicKey, waitForTransBlock=False)
+        if trans is None:
+            cmdError("%s create producer" % (ClientName))
+            errorExit("Failed to create producer %s" % (testeraAccount.name))
 
     Print("set permission")
     code="currency"
@@ -527,15 +555,13 @@ try:
         cmdError("%s set action permission set" % (ClientName))
         errorExit("Failed to set permission")
 
-# TODO remove failed on eos-noon
-    if not amINoon:
-        Print("remove permission")
-        requirement="null"
-        trans=node.setPermission(testeraAccount.name, code, pType, requirement, waitForTransBlock=True)
-        if trans is None:
-            cmdError("%s set action permission set" % (ClientName))
-            errorExit("Failed to remove permission")
-                  
+    Print("remove permission")
+    requirement="null"
+    trans=node.setPermission(testeraAccount.name, code, pType, requirement, waitForTransBlock=True)
+    if trans is None:
+        cmdError("%s set action permission set" % (ClientName))
+        errorExit("Failed to remove permission")
+
     Print("Locking all wallets.")
     if not walletMgr.lockAllWallets():
         cmdError("%s wallet lock_all" % (ClientName))
@@ -574,7 +600,7 @@ try:
     for blockNum in range(1, currentBlockNum+1):
         block=node.getBlock(blockNum, retry=False)
         if block is None:
-            cmdError("% get block" % (ClientName))
+            cmdError("%s get block" % (ClientName))
             errorExit("mongo get block by num %d" % blockNum)
 
         if enableMongo:
@@ -591,7 +617,7 @@ try:
             #     if trans2 is None:
             #         errorExit("mongo get messages by transaction id %s" % (transId))
 
-            
+
     Print("Request invalid block numbered %d" % (currentBlockNum+1000))
     block=node.getBlock(currentBlockNum+1000, silentErrors=True, retry=False)
     if block is not None:
@@ -606,7 +632,7 @@ try:
             for line in errFile:
                 if p.search(line):
                    errorExit("FAILURE - Assert in tn_data_00/stderr.txt")
-        
+
     testSuccessful=True
     Print("END")
 finally:

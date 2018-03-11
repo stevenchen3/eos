@@ -50,9 +50,9 @@ void chain_initializer::register_types(chain_controller& chain, chainbase::datab
 }
 
 
-abi_def chain_initializer::eos_contract_abi()
+abi_def chain_initializer::eos_contract_abi(const abi_def& eosio_system_abi)
 {
-   abi_def eos_abi;
+   abi_def eos_abi(eosio_system_abi);
    eos_abi.types.push_back( type_def{"account_name","name"} );
    eos_abi.types.push_back( type_def{"share_type","int64"} );
    eos_abi.types.push_back( type_def{"onerror","bytes"} );
@@ -184,7 +184,7 @@ void chain_initializer::prepare_database( chain_controller& chain,
          a.privileged = true;
 
          if( name == config::system_account_name ) {
-            a.set_abi(eos_contract_abi());
+            a.set_abi(abi_def());
          }
       });
       const auto& owner = db.create<permission_object>([&](permission_object& p) {
